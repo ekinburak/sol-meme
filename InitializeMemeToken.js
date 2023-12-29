@@ -1,21 +1,39 @@
-const { createMint, getMint, getOrCreateAssociatedTokenAccount, getAccount, mintTo } = require('@solana/spl-token');
-const { clusterApiUrl, Connection, Keypair, LAMPORTS_PER_SOL } = require('@solana/web3.js');
+const {
+  createMint,
+  getMint,
+  findProgramAddress,
+  getOrCreateAssociatedTokenAccount,
+  getAccount,
+  mintTo,
+} = require('@solana/spl-token');
+const {
+  clusterApiUrl,
+  Connection,
+  Keypair,
+  LAMPORTS_PER_SOL,
+} = require('@solana/web3.js');
 const {
   createMetadataAccountV3,
   findMetadataPda,
+  updateMetadata,
 } = require("@metaplex-foundation/mpl-token-metadata");
-const { PublicKey, createSignerFromKeypair, signerIdentity} = require( "@metaplex-foundation/umi");
+const {
+  PublicKey,
+  createSignerFromKeypair,
+  signerIdentity,
+  none,
+  some,
+} = require("@metaplex-foundation/umi");
 const { createUmi } = require('@metaplex-foundation/umi-bundle-defaults');
-const { fromWeb3JsKeypair } = require('@metaplex-foundation/umi-web3js-adapters');
+const { fromWeb3JsKeypair, fromWeb3JsPublicKey } = require('@metaplex-foundation/umi-web3js-adapters');
 const fs = require('fs');
-
 
 /**
  * Initializes the Solana connection.
  * @returns {Connection} The Solana connection object.
  */
 function initializeConnection() {
-    return new Connection(clusterApiUrl('devnet'), 'confirmed');
+  return new Connection(clusterApiUrl('devnet'), 'confirmed');
 }
 
 /**
@@ -24,18 +42,18 @@ function initializeConnection() {
  * @param {Keypair} payer - The payer's keypair.
  * @param {Keypair} mintAuthority - The mint authority's keypair.
  * @param {Keypair} freezeAuthority - The freeze authority's keypair.
- * @returns {PublicKey} The mint public key.
+ * @returns {Promise<PublicKey>} The mint public key.
  */
 async function createNewToken(connection, payer, mintAuthority, freezeAuthority) {
-    const mint = await createMint(
-        connection,
-        payer,
-        mintAuthority.publicKey,
-        freezeAuthority.publicKey,
-        9 // Decimal default set to 9
-    );
-    console.log(`Mint Public Key: ${mint.toBase58()}`);
-    return mint;
+  const mint = await createMint(
+    connection,
+    payer,
+    mintAuthority.publicKey,
+    freezeAuthority.publicKey,
+    9 // Decimal default set to 9
+  );
+  console.log(`Mint Public Key: ${mint.toBase58()}`);
+  return mint;
 }
 
 /**
@@ -48,14 +66,14 @@ async function createNewToken(connection, payer, mintAuthority, freezeAuthority)
  * @param {number} amount - The amount to mint.
  */
 async function mintTokens(connection, payer, mint, recipient, mintAuthority, amount) {
-    await mintTo(
-        connection,
-        payer,
-        mint,
-        recipient,
-        mintAuthority,
-        amount
-    );
+  await mintTo(
+    connection,
+    payer,
+    mint,
+    recipient,
+    mintAuthority,
+    amount
+  );
 }
 
 /**
@@ -70,12 +88,12 @@ function saveKeypairToFile(keypair, filename) {
  */
 function loadKeypairFromFile(filename) {
   if (fs.existsSync(filename)) {
-      const secretKey = Uint8Array.from(JSON.parse(fs.readFileSync(filename, 'utf-8')));
-      return Keypair.fromSecretKey(secretKey);
+    const secretKey = Uint8Array.from(JSON.parse(fs.readFileSync(filename, 'utf-8')));
+    return Keypair.fromSecretKey(secretKey);
   } else {
-      const newKeypair = Keypair.generate();
-      saveKeypairToFile(newKeypair, filename);
-      return newKeypair;
+    const newKeypair = Keypair.generate();
+    saveKeypairToFile(newKeypair, filename);
+    return newKeypair;
   }
 }
 
@@ -89,46 +107,70 @@ function loadKeypairFromFile(filename) {
 async function findExistingTokenAccount(connection, mint, owner) {
   const accounts = await connection.getParsedTokenAccountsByOwner(owner, { mint });
   if (accounts.value.length > 0) {
-      return accounts.value[0].pubkey;
+    return accounts.value[0].pubkey;
   }
   return null;
 }
 
-async function createOrUpdateMetadata(umi, mintAddress, signer, metadata, initialize) {
+async function createOrUpdateMetadata(umi, mintAddress, signer) {
+  
+  const INITIALIZE_METADATA = true; // Set to false to update existing metadata
 
-  const metadataPda = findMetadataPda(umi, { mint: mintAddress });
+   const ourMetadata = {
+    name: "Your Token Name",
+    symbol: "YTN",
+    uri: "https://raw.githubusercontent.com/ekinburak/sol-meme/master/metadata.json",
+  };
+  const onChainData = {
+    ...ourMetadata,
+    sellerFeeBasisPoints: 0,
+    creators: null,
+    collection: null,
+    uses: null,
+  }
 
-  if (initialize) {
-    const accounts = {
-        mint: mintAddress, // Directly using mintAddress
+  try {
+
+    console.log("Metadata Initialization Process Started...");
+    //console.log("Signer Address:", signer);
+
+    if (INITIALIZE_METADATA) {
+      const accounts = {
+        mint: fromWeb3JsPublicKey(mintAddress),
         mintAuthority: signer,
-    };
-    const data = {
-        isMutable: true,
+      };
+      const data = {
+        is_mutable: true,
         collectionDetails: null,
-        data: {
-            name: metadata.name,
-            symbol: metadata.symbol,
-            uri: metadata.uri,
-            sellerFeeBasisPoints: metadata.sellerFeeBasisPoints,
-            creators: metadata.creators || null,
-            collection: metadata.collection || null,
-            uses: metadata.uses || null,
-        }
-    };
-    const txid = await createMetadataAccountV3(umi, { ...accounts, ...data }).sendAndConfirm(umi);
-    console.log(`Metadata creation transaction ID: ${txid}`);
-} else {
-    // Update metadata logic
-    // ...
-}
+        data: onChainData
+      };
+      console.log("Initialization Process - Step 1: Creating metadata account...");
+      const txid = await createMetadataAccountV3(umi, { ...accounts, ...data }).sendAndConfirm(umi);
+      console.log("Initialization Process - Step 1: Metadata account creation successful. Transaction ID:", txid);
+      const signature = txid;
+      console.log("Initialization Process - Step 2: Signature", signature);
+    } else {
+      const accounts = {
+        metadata: findMetadataPda(umi,{mint: fromWeb3JsPublicKey(mintAddress)}),
+        authority: signer,
+      };
+      const data = {
+        update_authority: signer,
+        data: some(metadata.data),
+      };
+      console.log("Updating metadata account...");
+      const txid = await updateMetadata(umi, { ...accounts, data }).sendAndConfirm(umi);
+      console.log("Metadata account update successful. Transaction ID:", txid);
+    }
+  } catch (error) {
+    console.error("Error:", error);
+  }
 }
 
 /**
  * Main function to run the token creation and minting process.
  */
 async function main() {
-
   const connection = initializeConnection();
 
   // Load or generate the payer's keypair
@@ -141,76 +183,60 @@ async function main() {
   console.log(`Payer's balance: ${payerBalance / LAMPORTS_PER_SOL} SOL`);
 
   if (payerBalance < 1 * LAMPORTS_PER_SOL) {
-      // Request an airdrop if balance is low
-      const airdropSignature = await connection.requestAirdrop(
-          payer.publicKey,
-          1 * LAMPORTS_PER_SOL
-      );
-        // Confirm the transaction
-      await connection.confirmTransaction(airdropSignature);
-        // Check and log payer's balance after the airdrop
-      payerBalance = await connection.getBalance(payer.publicKey);
-      console.log(`Payer's balance after airdrop: ${payerBalance / LAMPORTS_PER_SOL} SOL`);
+    // Request an airdrop if balance is low
+    const airdropSignature = await connection.requestAirdrop(
+      payer.publicKey,
+      1 * LAMPORTS_PER_SOL
+    );
+    // Confirm the transaction
+    await connection.confirmTransaction(airdropSignature);
+    // Check and log payer's balance after the airdrop
+    payerBalance = await connection.getBalance(payer.publicKey);
+    console.log(`Payer's balance after airdrop: ${payerBalance / LAMPORTS_PER_SOL} SOL`);
   }
 
-  const umi = createUmi("https://api.devnet.solana.com");
+  // Use the RPC endpoint of your choice.
+  const RPC_ENDPOINT = "https://devnet.helius-rpc.com/?api-key=a5e91db0-3801-4ca5-b5af-5878c1d2a41d";
+  const umi = createUmi(RPC_ENDPOINT);
+
   const signer = createSignerFromKeypair(umi, fromWeb3JsKeypair(payer));
   umi.use(signerIdentity(signer, true));
-
-  let tokenAccountInfo; // Declare the variable here
 
   // Create new mint
   const mintAuthority = Keypair.generate();
   const freezeAuthority = Keypair.generate();
   const mint = await createNewToken(connection, payer, mintAuthority, freezeAuthority);
-  console.log(`Mint Token Address: ${mint.toBase58()}`);
 
   // Attempt to find an existing token account
   const existingTokenAccountAddress = await findExistingTokenAccount(connection, mint, payer.publicKey);
 
+  let tokenAccountInfo;
+
   if (existingTokenAccountAddress) {
-      console.log(`Existing Token Account Found: ${existingTokenAccountAddress.toBase58()}`);
-      tokenAccountInfo = await getAccount(connection, existingTokenAccountAddress);
+    console.log(`Existing Token Account Found: ${existingTokenAccountAddress.toBase58()}`);
+    tokenAccountInfo = await getAccount(connection, existingTokenAccountAddress);
   } else {
-      const tokenAccount = await getOrCreateAssociatedTokenAccount(
-          connection,
-          payer,
-          mint,
-          payer.publicKey
-      );
-      console.log(`New Token Account Created: ${tokenAccount.address.toBase58()}`);
-      tokenAccountInfo = await getAccount(connection, tokenAccount.address);
-      console.log(`Token Account Amount: ${tokenAccountInfo.amount}`);
-  }
-
-    // Get mint information
-    let mintInfo = await getMint(connection, mint);
-    console.log(`Initial Supply: ${mintInfo.supply}`);
-
-  // Define metadata for the token
-  const metadata = {
-    name: "Your Token Name",
-    symbol: "YTN",
-    uri: "https://example.com/metadata.json", // Replace with your metadata URI
-    sellerFeeBasisPoints: 0,
-    // Assuming these are optional, set to undefined or null if not used
-    creators: undefined,
-    collection: undefined,
-    uses: undefined,
-  };
-
-  // Create or update metadata
-  const INITIALIZE_METADATA = true; // Set to false to update existing metadata
-  await createOrUpdateMetadata(umi, mint, signer, metadata, INITIALIZE_METADATA);
-
-
-
-  // Create or get associated token account
-  const tokenAccount = await getOrCreateAssociatedTokenAccount(
+    const tokenAccount = await getOrCreateAssociatedTokenAccount(
       connection,
       payer,
       mint,
       payer.publicKey
+    );
+    console.log(`New Token Account Created: ${tokenAccount.address.toBase58()}`);
+    tokenAccountInfo = await getAccount(connection, tokenAccount.address);
+    console.log(`Token Account Amount: ${tokenAccountInfo.amount}`);
+  }
+
+  // Get mint information
+  let mintInfo = await getMint(connection, mint);
+  console.log(`Initial Supply: ${mintInfo.supply}`);
+
+  // Create or get associated token account
+  const tokenAccount = await getOrCreateAssociatedTokenAccount(
+    connection,
+    payer,
+    mint,
+    payer.publicKey
   );
   console.log(`Token Account Address: ${tokenAccount.address.toBase58()}`);
 
@@ -221,6 +247,8 @@ async function main() {
   mintInfo = await getMint(connection, mint);
   console.log(`Updated Supply: ${mintInfo.supply}`);
 
+  // Create or update metadata
+  await createOrUpdateMetadata(umi, mint, signer);
 }
 
 main().catch(console.error);
