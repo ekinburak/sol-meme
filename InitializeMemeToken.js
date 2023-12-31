@@ -13,10 +13,20 @@ const {
   LAMPORTS_PER_SOL,
 } = require('@solana/web3.js');
 const {
-  createMetadataAccountV3,
-  findMetadataPda,
-  updateMetadata,
+  Collection, 
+  CreateMetadataAccountV3InstructionAccounts, 
+  CreateMetadataAccountV3InstructionDataArgs, 
+  Creator, 
+  MPL_TOKEN_METADATA_PROGRAM_ID, 
+  UpdateMetadataAccountV2InstructionAccounts, 
+  UpdateMetadataAccountV2InstructionData, 
+  Uses, 
+  createMetadataAccountV3, 
+  updateMetadataAccountV2, 
+  findMetadataPda
 } = require("@metaplex-foundation/mpl-token-metadata");
+
+
 const {
   PublicKey,
   createSignerFromKeypair,
@@ -50,9 +60,9 @@ async function createNewToken(connection, payer, mintAuthority, freezeAuthority)
     payer,
     mintAuthority.publicKey,
     freezeAuthority.publicKey,
-    9 // Decimal default set to 9
+    9
   );
-  console.log(`Mint Public Key: ${mint.toBase58()}`);
+  console.log(`Mint account created with address / public key: ${mint.toBase58()}`);
   return mint;
 }
 
@@ -112,13 +122,13 @@ async function findExistingTokenAccount(connection, mint, owner) {
   return null;
 }
 
-async function createOrUpdateMetadata(umi, mintAddress, signer) {
+async function OLD_createOrUpdateMetadata(umi, mintAddress, signer) {
   
   const INITIALIZE_METADATA = true; // Set to false to update existing metadata
 
    const ourMetadata = {
-    name: "Your Token Name",
-    symbol: "YTN",
+    name: "XMAS Token Name",
+    symbol: "XMASTN",
     uri: "https://raw.githubusercontent.com/ekinburak/sol-meme/master/metadata.json",
   };
   const onChainData = {
@@ -145,7 +155,7 @@ async function createOrUpdateMetadata(umi, mintAddress, signer) {
         data: onChainData
       };
       console.log("Initialization Process - Step 1: Creating metadata account...");
-      const txid = await createMetadataAccountV3(umi, { ...accounts, ...data }).sendAndConfirm(umi);
+      const txid = await createMetadataAccountV3(umi, {...accounts, ...data}).sendAndConfirm(umi);
       console.log("Initialization Process - Step 1: Metadata account creation successful. Transaction ID:", txid);
       const signature = txid;
       console.log("Initialization Process - Step 2: Signature", signature);
@@ -166,6 +176,72 @@ async function createOrUpdateMetadata(umi, mintAddress, signer) {
     console.error("Error:", error);
   }
 }
+
+async function createOrUpdateMetadata(umi, mintAddress, signer) {
+  const INITIALIZE_METADATA = true; // Set to false to update existing metadata
+
+  const ourMetadata = {
+      name: "XMAS Token Name",
+      symbol: "XMASTN",
+      uri: "https://raw.githubusercontent.com/ekinburak/sol-meme/master/metadata.json",
+  };
+
+  try {
+      console.log("Metadata Initialization Process Started...");
+
+      if (INITIALIZE_METADATA) {
+          console.log("Initialization Process - Step 1: Preparing metadata account creation...");
+
+          // Arguments for metadata account creation
+          const args = {
+              data: {
+                  ...ourMetadata,
+                  sellerFeeBasisPoints: 0,
+                  collection: null,
+                  creators: [
+                      { address: fromWeb3JsPublicKey(signer), verified: true, share: 100 }
+                  ],
+                  uses: null
+              },
+              isMutable: true,
+              collectionDetails: null
+          };
+
+          // Accounts for metadata account creation
+          const accounts = {
+              metadata: fromWeb3JsPublicKey(metadata),
+              mint: fromWeb3JsPublicKey(mintAddress), 
+              payer: signer,
+              mintAuthority: signer,
+              updateAuthority: fromWeb3JsPublicKey(signer)
+          };
+
+          const fullArgs = {...accounts, ...args};
+
+          const metadataBuilder = createMetadataAccountV3(umi, fullArgs);
+
+          const ix = metadataBuilder.getInstructions()[0];
+          ix.keys = ix.keys.map(key => {
+              const newKey = {...key};
+              newKey.pubkey = toWeb3JsPublicKey(key.pubkey);
+              return newKey;
+          });
+
+          const tx = new Transaction().add(ix);
+          console.log("Initialization Process - Step 2: Sending transaction for metadata account creation...");
+          const sig = await sendAndConfirmTransaction(connection, tx, [signer]);
+          console.log("Initialization Process - Step 3: Metadata account creation successful. Signature:", sig);
+      } else {
+          console.log("Update Process Started...");
+          // Update logic here (similar approach, but with update instructions)
+          console.log("Update Process Completed. Transaction ID:", /* transaction ID here */);
+      }
+  } catch (error) {
+      console.error("Error in createOrUpdateMetadata:", error);
+  }
+}
+
+
 
 /**
  * Main function to run the token creation and minting process.
@@ -245,10 +321,18 @@ async function main() {
 
   // Display updated supply and token account amount
   mintInfo = await getMint(connection, mint);
-  console.log(`Updated Supply: ${mintInfo.supply}`);
+  console.log(`Mint Token Updated Supply: ${mintInfo.supply}`);
+  console.log(`Mint: ${mint}`);
+  console.log(`Mint Public Key: ${mint.publicKey}`);
+
+  // Ensure mint is in the correct format (e.g., PublicKey or base58 string)
+  //const mintAddress = mint.publicKey.toBase58(); // or just `mint` if it's already in the correct format
 
   // Create or update metadata
+  //await createOrUpdateMetadata(umi, mintAddress, signer);
+
   await createOrUpdateMetadata(umi, mint, signer);
+
 }
 
 main().catch(console.error);
